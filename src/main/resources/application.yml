@@ -9,7 +9,7 @@ management:
     web:
       exposure:
         include: "*"
-      base-path: "/manage"
+#      base-path: "/manage"
   info:
     java:
       enabled: true
@@ -21,6 +21,10 @@ management:
       mode: "full"
 #  server:
 #    port: 9292
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true
 info:
   app:
     name: hello-actuator
