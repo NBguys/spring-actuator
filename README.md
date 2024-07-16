@@ -751,9 +751,212 @@ https://grafana.com/grafana/dashboards/4701-jvm-micrometer/
 * 커넥션 풀 고갈
 * 에러 로그 급증
 
-TrafficController.java 참고
-실행
-http://localhost:8080/cpu
-http://localhost:8080/jvm
-http://localhost:8080/jdbc (10번 이상 실행하자)
-http://localhost:8080/error-log (여러번 실행하자)
+TrafficController.java 참고   
+실행  
+http://localhost:8080/cpu  
+http://localhost:8080/jvm  
+http://localhost:8080/jdbc (10번 이상 실행하자)  
+http://localhost:8080/error-log (여러번 실행하자)  
+
+### 메트릭 등록 - 예제 만들기
+#### 주문수, 취소수
+* 상품을 주문하면 주문수가 증가한다.
+* 상품을 취소해도 주문수는 유지한다. 대신에 취소수를 증가한다.
+#### 재고 수량
+* 상품을 주문하면 재고 수량이 감소한다.
+* 상품을 취소하면 재고 수량이 증가한다.
+* 재고 물량이 들어오면 재고 수량이 증가한다.
+* 주문수, 취소수는 계속 증가하므로 카운터를 사용하자.
+* 재고 수량은 증가하거나 감소하므로 게이지를 사용하자.
+
+### 메트릭 등록1 - 카운터
+#### MeterRegistry
+마이크로미터 기능을 제공하는 핵심 컴포넌트  
+스프링을 통해서 주입 받아서 사용하고, 이곳을 통해서 카운터, 게이지 등을 등록한다.  
+
+#### Counter(카운터)  
+* https://prometheus.io/docs/concepts/metric_types/#counter
+* 단조롭게 증가하는 단일 누적 측정항목
+  * 단일 값
+  * 보통 하나씩 증가
+  * 누적이므로 전체 값을 포함(total)
+  * 프로메테우스에서는 일반적으로 카운터의 이름 마지막에 _total 을 붙여서 my_order_total 과 같이 표현함
+* 값을 증가하거나 0으로 초기화 하는 것만 가능
+* 마이크로미터에서 값을 감소하는 기능도 지원하지만, 목적에 맞지 않음
+* 예) HTTP 요청수
+
+OrderServiceV1.java 참고
+* Counter.builder(name) 를 통해서 카운터를 생성한다. name 에는 메트릭 이름을 지정한다.
+* tag 를 사용했는데, 프로메테우스에서 필터할 수 있는 레이블로 사용된다.
+* 주문과 취소는 메트릭 이름은 같고 tag 를 통해서 구분하도록 했다.
+* register(registry) : 만든 카운터를 MeterRegistry 에 등록한다. 이렇게 등록해야 실제 동작한다.
+* increment() : 카운터의 값을 하나 증가한다.
+
+프로메테우스 포멧 메트릭 확인  
+http://localhost:8080/actuator/prometheus  
+메트릭 이름이 my.order my_order_total 로 변경된 것을 확인할 수 있다.  
+프로메테우스는 . _ 로 변경한다.  
+카운터는 마지막에 _total 을 붙인다. 프로메테우스는 관례상 카운터 이름의 끝에 _total 을 붙인다.  
+method 라는 tag , 레이블을 기준으로 데이터가 분류되어 있다.  
+
+### 그라파나 등록 - 주문수, 취소수
+앞서 만들어둔 hello-dashboard 에 주문수, 취소수 그래프를 추가하자
+#### Panel options
+* Title : 주문수
+#### PromQL
+* increase(my_order_total{method="order"}[1m])
+  * Legend : {{method}}
+* increase(my_order_total{method="cancel"}[1m])
+  * Legend : {{method}}
+
+### 메트릭 등록3 - Timer
+#### Timer
+Timer는 좀 특별한 메트릭 측정 도구인데, 시간을 측정하는데 사용된다.  
+* 카운터와 유사한데, Timer 를 사용하면 실행 시간도 함께 측정할 수 있다.
+* Timer 는 다음과 같은 내용을 한번에 측정해준다.
+  * seconds_count : 누적 실행 수 - 카운터
+  * seconds_sum : 실행 시간의 합 - sum
+  * seconds_max : 최대 실행 시간(가장 오래걸린 실행 시간) - 게이지
+    * 내부에 타임 윈도우라는 개념이 있어서 1~3분 마다 최대 실행 시간이 다시 계산된다.
+ 
+액츄에이터 메트릭 확인  
+http://localhost:8080/actuator/metrics/my.order  
+* measurements 항목을 보면 COUNT , TOTAL_TIME , MAX 이렇게 총 3가지 측정 항목을 확인할 수 있다.
+  * COUNT : 누적 실행 수(카운터와 같다)
+  * TOTAL_TIME : 실행 시간의 합(각각의 실행 시간의 누적 합이다)
+  * MAX : 최대 실행 시간(가장 오래 걸린 실행시간이다)
+
+프로메테우스 포멧 메트릭 확인   
+http://localhost:8080/actuator/prometheus  
+프로메테우스로 다음 접두사가 붙으면서 3가지 메트릭을 제공한다.  
+* seconds_count : 누적 실행 수
+* seconds_sum : 실행 시간의 합
+* seconds_max : 최대 실행 시간(가장 오래걸린 실행 시간), 프로메테우스 gague
+  * 참고: 내부에 타임 윈도우라는 개념이 있어서 1~3분 마다 최대 실행 시간이 다시 계산된다.  
+
+여기서 평균 실행 시간도 계산할 수 있다.
+* seconds_sum / seconds_count = 평균 실행시간
+
+### 그라파나 등록 - 주문수 v3
+앞서 만들어둔 hello-dashboard 에 주문수, 취소수 그래프를 추가하자
+#### 패널 옵션
+* Title : 주문수 v3
+#### PromQL
+* increase(my_order_seconds_count{method="order"}[1m])
+  * Legend : {{method}}
+* increase(my_order_seconds_count{method="cancel"}[1m])
+  * Legend : {{method}}
+
+### 그라파나 등록 - 최대 실행시간
+패널 옵션
+* Title : 최대 실행시간
+PromQL
+* my_order_seconds_max
+
+### 그라파나 등록 - 평균 실행시간 
+패널 옵션
+* Title : 평균 실행시간
+PromQL
+* increase(my_order_seconds_sum[1m]) / increase(my_order_seconds_count[1m])
+
+### 메트릭 등록4 - @Timed
+OrderServiceV4.java 참고
+@Timed("my.order") 타입이나 메서드 중에 적용할 수 있다. 타입에 적용하면 해당 타입의 모든  
+public 메서드에 타이머가 적용된다. 참고로 이 경우 getStock() 에도 타이머가 적용된다  
+
+#### 액츄에이터 메트릭 확인
+http://localhost:8080/actuator/metrics/my.order  
+tag 중에 exception 이 추가 되는 부분을 제외하면 기존과 같다.
+
+### 메트릭 등록5 - 게이지
+#### Gauge(게이지)
+* https://prometheus.io/docs/concepts/metric_types/#gauge  
+* 게이지는 임의로 오르내릴 수 있는 단일 숫자 값을 나타내는 메트릭
+* 값의 현재 상태를 보는데 사용
+* 값이 증가하거나 감소할 수 있음
+* 예) 차량의 속도, CPU 사용량, 메모리 사용량
+
+### 정리
+#### Micrometer 사용법 이해
+메트릭은 100% 정확한 숫자를 보는데 사용하는 것이 아니다. 약간의 오차를 감안하고 실시간으로 대략의 데이터를 보는 목적으로 사용한다.  
+
+#### 마이크로미터 핵심 기능
+Counter, Gauge, Timer, Tags
+
+#### MeterRegistry
+마이크로미터 기능을 제공하는 핵심 컴포넌트  
+스프링을 통해서 주입 받아서 사용하고, 이곳을 통해서 카운터, 게이지 등을 등록한다.  
+
+#### Counter(카운터)
+* https://prometheus.io/docs/concepts/metric_types/#counter
+* 단조롭게 증가하는 단일 누적 측정항목
+  * 단일 값
+  * 보통 하나씩 증가
+  * 누적이므로 전체 값을 포함(total)
+  * 프로메테우스에서는 일반적으로 카운터의 이름 마지막에 _total 을 붙여서 my_order_total 과 같이 표현함
+* 값을 증가하거나 0으로 초기화 하는 것만 가능
+* 마이크로미터에서 값을 감소하는 기능도 지원하지만, 목적에 맞지 않음
+* 예) HTTP 요청수
+
+#### Gauge(게이지)
+https://prometheus.io/docs/concepts/metric_types/#gauge  
+* 게이지는 임의로 오르내릴 수 있는 단일 숫자 값을 나타내는 메트릭
+* 값의 현재 상태를 보는데 사용
+* 값이 증가하거나 감소할 수 있음
+* 예) 차량의 속도, CPU 사용량, 메모리 사용량
+
+#### Timer
+Timer는 좀 특별한 메트릭 측정 도구인데, 시간을 측정하는데 사용된다.
+* 카운터와 유사한데, Timer 를 사용하면 실행 시간도 함께 측정할 수 있다.
+* Timer 는 다음과 같은 내용을 한번에 측정해준다.
+  * seconds_count : 누적 실행 수 - 카운터
+  * seconds_sum : 실행 시간의 합 - sum
+  * seconds_max : 최대 실행 시간(가장 오래걸린 실행 시간) - 게이지
+    * 내부에 타임 윈도우라는 개념이 있어서 1~3분 마다 최대 실행 시간이 다시 계산된다.
+  * seconds_sum / seconds_count = 평균 실행시간
+
+#### Tag, 레이블
+* Tag를 사용하면 데이터를 나누어서 확인할 수 있다.
+* Tag는 카디널리티가 낮으면서 그룹화 할 수 있는 단위에 사용해야 한다.
+  * 예) 성별, 주문 상태, 결제 수단[신용카드, 현금] 등등
+* 카디널리티가 높으면 안된다. 예) 주문번호, PK 같은 것
+
+### 실무 모니터링 환경 구성 팁
+#### 모니터링 3단계
+* 대시보드
+* 애플리케이션 추적 - 핀포인트
+* 로그
+
+#### 대시보드
+전체를 한눈에 볼 수 있는 가장 높은 뷰
+
+#### 제품
+마이크로미터, 프로메테우스, 그라파나 등등  
+
+#### 모니터링 대상  
+시스템 메트릭(CPU, 메모리)  
+애플리케이션 메트릭(톰캣 쓰레드 풀, DB 커넥션 풀, 애플리케이션 호출 수)  
+비즈니스 메트릭(주문수, 취소수)  
+
+### 애플리케이션 추적
+주로 각각의 HTTP 요청을 추적, 일부는 마이크로서비스 환경에서 분산 추적  
+
+#### 제품
+핀포인트(오픈소스), 스카우트(오픈소스), 와탭(상용), 제니퍼(상용)
+* https://github.com/pinpoint-apm/pinpoint
+
+#### 로그
+가장 자세한 추적, 원하는데로 커스텀 가능
+같은 HTTP 요청을 묶어서 확인할 수 있는 방법이 중요, MDC 적용
+
+#### 모니터링 정리
+각각 용도가 다르다.  
+관찰을 할 때는 전체 점점 좁게  
+핀포인트는 정말 좋다. 강추 마이크로 서비스 분산 모니터링도 가능, 대용량 트래픽에 대응  
+
+#### 알람
+모니터링 툴에서 일정 이상 수치가 넘어가면, 슬랙, 문자 등을 연동  
+알람은 2가지 종류로 꼭 구분해서 관리  
+경고, 심각  
+경고는 하루 1번 정도 사람이 직접 확인해도 되는 수준(사람이 들어가서 확인)  
+심각은 즉시 확인해야 함, 슬랙 알림(앱을 통해 알림을 받도록), 문자, 전화  
